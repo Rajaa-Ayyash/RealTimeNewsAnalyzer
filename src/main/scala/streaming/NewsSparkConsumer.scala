@@ -1,13 +1,26 @@
 package consumer
 
+import com.typesafe.config.ConfigFactory
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
-import java.util.UUID
+
 
 object NewsSparkConsumer {
 
   def main(args: Array[String]): Unit = {
+
+    val config = ConfigFactory.load()
+
+    val mongoUri = config.getString("mongo.uri")
+    val mongoDb = config.getString("mongo.database")
+    val mongoCollection = config.getString("mongo.collection.cleaned")
+
+    val kafkaBootstrap = config.getString("kafka.bootstrap")
+    val rawTopic = config.getString("kafka.topic.raw")
+    val cleanedTopic = config.getString("kafka.topic.cleaned")
+    val consumerGroupId = config.getString("kafka.consumer.groupId")
+
 
     val spark = SparkSession.builder()
       .appName("Kafka News Streaming Consumer")
@@ -28,8 +41,9 @@ object NewsSparkConsumer {
 
     val kafkaDF = spark.readStream
       .format("kafka")
-      .option("kafka.bootstrap.servers", "localhost:9092")
-      .option("subscribe", "raw-news")
+      .option("kafka.bootstrap.servers", kafkaBootstrap)
+      .option("subscribe", rawTopic)
+      .option("kafka.group.id", consumerGroupId)
       .option("startingOffsets", "earliest")
       .load()
 
@@ -162,17 +176,35 @@ object NewsSparkConsumer {
       )
       .drop("tokens", "tokens_ns", "freq_map")
 
-    val mongoCheckpoint = s"file:///C:/spark-checkpoints/mongo-cleaned-articles/${UUID.randomUUID().toString}"
+    val kafkaOutDF = enrichedDF
+      .select(to_json(struct(enrichedDF.columns.map(col): _*)).alias("value"))
+
+    val kafkaCheckpoint =
+      "file:///C:/spark-checkpoints/kafka-cleaned-news"
+
+    val kafkaQuery = kafkaOutDF.writeStream
+      .format("kafka")
+      .option("kafka.bootstrap.servers", kafkaBootstrap)
+      .option("topic", cleanedTopic)
+      .option("checkpointLocation", kafkaCheckpoint)
+      .outputMode("append")
+      .start()
+
+
+
+    val mongoCheckpoint =
+      "file:///C:/spark-checkpoints/mongo-cleaned-articles"
 
     val mongoQuery = enrichedDF.writeStream
       .format("mongodb")
-      .option("spark.mongodb.write.connection.uri", "mongodb://localhost:27017")
-      .option("spark.mongodb.write.database", "news_streaming")
-      .option("spark.mongodb.write.collection", "cleaned_articles")
+      .option("spark.mongodb.write.connection.uri", mongoUri)
+      .option("spark.mongodb.write.database", mongoDb)
+      .option("spark.mongodb.write.collection", mongoCollection)
       .option("checkpointLocation", mongoCheckpoint)
       .outputMode("append")
       .start()
 
-    mongoQuery.awaitTermination()
+    spark.streams.awaitAnyTermination()
+
   }
 }
