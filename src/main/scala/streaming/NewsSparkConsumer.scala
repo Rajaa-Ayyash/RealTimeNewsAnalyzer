@@ -6,6 +6,7 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 
 
+
 object NewsSparkConsumer {
 
   def main(args: Array[String]): Unit = {
@@ -19,7 +20,7 @@ object NewsSparkConsumer {
     val kafkaBootstrap = config.getString("kafka.bootstrap")
     val rawTopic = config.getString("kafka.topic.raw")
     val cleanedTopic = config.getString("kafka.topic.cleaned")
-    val consumerGroupId = config.getString("kafka.consumer.groupId")
+
 
 
     val spark = SparkSession.builder()
@@ -43,7 +44,7 @@ object NewsSparkConsumer {
       .format("kafka")
       .option("kafka.bootstrap.servers", kafkaBootstrap)
       .option("subscribe", rawTopic)
-      .option("kafka.group.id", consumerGroupId)
+
       .option("startingOffsets", "earliest")
       .load()
 
@@ -166,18 +167,44 @@ object NewsSparkConsumer {
           .when(length(col("source")) === 0, "Unknown")
           .otherwise(initcap(trim(regexp_extract(col("source"), "^[^\\-|—|\\|]+", 0))))
       )
-      .withColumn("category",
-        when(col("title").rlike("(?i)\\b(election|president|government|parliament|minister|senate|war|ceasefire|diplomacy|policy)\\b"), "politics")
-          .when(col("title").rlike("(?i)\\b(ai|artificial intelligence|openai|google|apple|microsoft|software|hardware|chip|gadget|smartphone|netflix|meta|llama|amazon|kindle|ebook|e-reader)\\b"), "tech")
-          .when(col("title").rlike("(?i)\\b(match|league|epl|nba|nfl|goal|tournament|wins|beat|cricket|tennis|football|soccer|liverpool)\\b"), "sports")
-          .when(col("title").rlike("(?i)\\b(stocks?|market|shares?|earnings|revenue|inflation|bank|trade|deal|acquisition|merger|ipo|borrows?|loan|payments|delinquencies)\\b"), "business")
-          .when(col("title").rlike("(?i)\\b(study|research|nasa|space|climate|physics|biology|medical|health|vaccine|quantum|science)\\b"), "science")
+    val textCol =
+      lower(concat_ws(" ", col("title"), col("content")))
+
+    val categorizedDF = enrichedDF
+      .withColumn(
+        "category",
+        when(
+          textCol.rlike("election|president|government|parliament|minister|senate|war|ceasefire|gaza|israel|ukraine|diplomacy|policy") ||
+            array_contains(col("keywords"), "war") ||
+            array_contains(col("keywords"), "election"),
+          "politics"
+        )
+          .when(
+            textCol.rlike("ai|artificial intelligence|openai|google|apple|microsoft|software|hardware|chip|gadget|smartphone|netflix|meta|llama|amazon|kindle|ebook") ||
+              array_contains(col("keywords"), "ai"),
+            "tech"
+          )
+          .when(
+            textCol.rlike("match|league|epl|nba|nfl|goal|tournament|cricket|tennis|football|soccer|liverpool") ||
+              array_contains(col("keywords"), "football"),
+            "sports"
+          )
+          .when(
+            textCol.rlike("stocks?|market|shares?|earnings|revenue|inflation|bank|trade|deal|acquisition|merger|ipo|loan|payments") ||
+              array_contains(col("keywords"), "inflation"),
+            "business"
+          )
+          .when(
+            textCol.rlike("study|research|nasa|space|climate|physics|biology|medical|health|vaccine|quantum|science") ||
+              array_contains(col("keywords"), "science"),
+            "science"
+          )
           .otherwise("other")
       )
       .drop("tokens", "tokens_ns", "freq_map")
 
-    val kafkaOutDF = enrichedDF
-      .select(to_json(struct(enrichedDF.columns.map(col): _*)).alias("value"))
+    val kafkaOutDF = categorizedDF
+      .select(to_json(struct(categorizedDF.columns.map(col): _*)).alias("value"))
 
     val kafkaCheckpoint =
       "file:///C:/spark-checkpoints/kafka-cleaned-news"
@@ -191,11 +218,10 @@ object NewsSparkConsumer {
       .start()
 
 
-
     val mongoCheckpoint =
       "file:///C:/spark-checkpoints/mongo-cleaned-articles"
 
-    val mongoQuery = enrichedDF.writeStream
+    val mongoQuery = categorizedDF.writeStream
       .format("mongodb")
       .option("spark.mongodb.write.connection.uri", mongoUri)
       .option("spark.mongodb.write.database", mongoDb)
@@ -203,6 +229,7 @@ object NewsSparkConsumer {
       .option("checkpointLocation", mongoCheckpoint)
       .outputMode("append")
       .start()
+
 
     spark.streams.awaitAnyTermination()
 

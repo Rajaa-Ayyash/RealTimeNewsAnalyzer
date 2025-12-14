@@ -45,3 +45,8 @@ build/
 
 ### Scala ###
 .bsp/
+
+# Spark / Kafka runtime
+checkpoint/
+kafka-logs/
+logs/
