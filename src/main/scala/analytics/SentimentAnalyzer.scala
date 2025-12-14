@@ -1,5 +1,4 @@
 package analytics
-package streaming.sentiment
 
 import com.typesafe.config.ConfigFactory
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
