@@ -13,13 +13,13 @@ object CategoryTrendAnalysis {
 
 
     val kafkaBootstrap = config.getString("kafka.bootstrap")
-    val cleanedTopic   = config.getString("kafka.topic.cleaned")
+    val cleanedTopic = config.getString("kafka.topic.cleaned")
     val categoryTrendsTopic =
       if (config.hasPath("kafka.topic.categoryTrends")) config.getString("kafka.topic.categoryTrends")
       else "category-trends"
 
 
-    val mongoUri      = config.getString("mongo.uri")
+    val mongoUri = config.getString("mongo.uri")
     val mongoDatabase = config.getString("mongo.database")
     val categoryTrendsCollection =
       if (config.hasPath("mongo.collection.categoryTrends")) config.getString("mongo.collection.categoryTrends")
