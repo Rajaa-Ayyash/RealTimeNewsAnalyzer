@@ -6,7 +6,8 @@ import org.apache.kafka.common.serialization.StringSerializer
 import com.rometools.rome.io.{SyndFeedInput, XmlReader, ParsingFeedException}
 import java.net.URL
 import java.util.{Properties, Timer, TimerTask}
-import scala.collection.mutable
+import utils.BloomFilter
+
 
 object NewsProducer {
 
@@ -28,7 +29,11 @@ object NewsProducer {
   private val producer = new KafkaProducer[String, String](props)
 
 
-  private val sentNewsTitles = mutable.Set[String]()
+  private val bloomFilter = new BloomFilter(
+    size = 500000,
+    hashFunctions = 3
+  )
+
 
   def main(args: Array[String]): Unit = {
 
@@ -61,10 +66,11 @@ object NewsProducer {
 
         entries.forEach { entry =>
           val title = entry.getTitle
+          val link  = Option(entry.getLink).getOrElse("").toLowerCase.trim
 
-          if (!sentNewsTitles.contains(title)) {
-
-            sentNewsTitles += title
+          val uniqueKey = link
+          if (uniqueKey.nonEmpty && !bloomFilter.mightContain(uniqueKey)) {
+            bloomFilter.put(uniqueKey)
             newCount += 1
 
             val content =
@@ -83,6 +89,8 @@ object NewsProducer {
 
             producer.send(new ProducerRecord(rawTopic, json))
             println(s"📨 Sent article from ${feed.getTitle}: $title")
+          }else {
+            println(s"⏭️ Duplicate article skipped: $title")
           }
         }
 
