@@ -45,6 +45,24 @@ object BreakingNewsDetectorJob {
       StructField("category", StringType)
     ))
 
+    val noiseWords = Seq(
+      "top","better","best","worst",
+      "said","says","say",
+      "new","latest","update","updates",
+      "report","reports","reported","according",
+      "confirmed","announcement","official",
+      "statement","claims","sources",
+      "today","yesterday","tomorrow",
+      "week","weeks","month","months","year","years",
+      "time","day","days","hours","minutes",
+      "amid","after","before","during","while",
+      "following","around","over","under",
+      "more","most","less","many","several",
+      "news","media","article","story","stories",
+      "video","videos","image","images"
+    )
+
+
 
     val kafkaDF = spark.readStream
       .format("kafka")
@@ -63,11 +81,18 @@ object BreakingNewsDetectorJob {
       .withColumn("published_ts", to_timestamp(col("published")))
       .filter(col("published_ts").isNotNull)
       .withColumn("keyword", explode(col("keywords")))
+      .withColumn("keyword", lower(trim(col("keyword"))))
+      .filter(length(col("keyword")) > 3)
+      .filter(!col("keyword").isin(noiseWords: _*))
+      .dropDuplicates("title", "category", "keyword")
       .select(
         col("published_ts"),
         col("category"),
-        col("keyword")
+        col("keyword"),
+        col("title"),
+        col("link")
       )
+
 
 
     val windowedCounts = exploded
@@ -77,10 +102,14 @@ object BreakingNewsDetectorJob {
         col("category"),
         col("keyword")
       )
-      .agg(count(lit(1)).as("exact_count"))
+      .agg(
+        count(lit(1)).as("exact_count"),
+        slice(collect_set(col("title")), 1, 3).as("sample_titles"),
+        slice(collect_set(col("link")),  1, 3).as("sample_links")
+      )
 
 
-    val BREAKING_THRESHOLD = 5
+    val BREAKING_THRESHOLD =15
 
     val query = windowedCounts.writeStream
       .foreachBatch { (batchDF: Dataset[Row], batchId: Long) =>
@@ -101,8 +130,15 @@ object BreakingNewsDetectorJob {
           val category   = row.getAs[String]("category")
           val keyword    = row.getAs[String]("keyword")
           val exactCount = row.getAs[Long]("exact_count")
+          val sampleTitles = row.getAs[Seq[String]]("sample_titles")
+          val sampleLinks  = row.getAs[Seq[String]]("sample_links")
 
-          cms.add(keyword)
+
+          var i = 0
+          while (i < exactCount.toInt) {
+            cms.add(keyword)
+            i += 1
+          }
           val approxCount = cms.estimateCount(keyword)
 
           if (approxCount >= BREAKING_THRESHOLD) {
@@ -113,6 +149,8 @@ object BreakingNewsDetectorJob {
               keyword,
               exactCount,
               approxCount,
+              sampleTitles,
+              sampleLinks,
               "BREAKING",
               java.time.Instant.now().toString
             ))
@@ -124,13 +162,15 @@ object BreakingNewsDetectorJob {
 
           val breakingDF = spark.createDataset(breakingRows).toDF(
             "window_start",
-            "window_end",
-            "category",
-            "keyword",
-            "exact_count",
-            "approx_count",
-            "status",
-            "detected_at"
+           "window_end",
+           "category",
+           "keyword",
+           "exact_count",
+           "approx_count",
+           "sample_titles",
+           "sample_links",
+           "status",
+           "detected_at"
           )
 
 
@@ -154,6 +194,8 @@ object BreakingNewsDetectorJob {
                   col("keyword"),
                   col("exact_count"),
                   col("approx_count"),
+                  col("sample_titles"),
+                  col("sample_links"),
                   col("status"),
                   col("detected_at")
                 )

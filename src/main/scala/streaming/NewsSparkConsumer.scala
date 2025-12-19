@@ -44,7 +44,6 @@ object NewsSparkConsumer {
       .format("kafka")
       .option("kafka.bootstrap.servers", kafkaBootstrap)
       .option("subscribe", rawTopic)
-
       .option("startingOffsets", "earliest")
       .load()
 
@@ -170,38 +169,96 @@ object NewsSparkConsumer {
     val textCol =
       lower(concat_ws(" ", col("title"), col("content")))
 
-    val categorizedDF = enrichedDF
+    val politicsRegex =
+      "election|president|government|parliament|minister|senate|" +
+        "war|ceasefire|gaza|israel|ukraine|diplomacy|" +
+        "sanctions?|embargo|airstrike|missile|military"
+
+    val techRegex =
+      "ai|artificial intelligence|openai|google|apple|microsoft|" +
+        "software|hardware|chip|cloud|streaming|platform|" +
+        "telecom|mobile|broadband|5g|cybersecurity|app|subscription"
+
+    val sportsRegex =
+      "match|league|tournament|goal|" +
+        "football|soccer|nba|nfl|tennis|cricket|" +
+        "boxing|ufc|mma|coach|retired|knockout"
+
+    val businessRegex =
+      "market|stocks?|shares?|inflation|bank|" +
+        "deal|acquisition|merger|ipo|earnings|" +
+        "pricing|revenue|subscription"
+
+    val scienceRegex =
+      "research|study|nasa|space|climate|" +
+        "physics|biology|medical|health|vaccine|genome"
+
+
+    val scoredDF = enrichedDF
+      .withColumn(
+        "politics_score",
+        when(textCol.rlike(politicsRegex), 3).otherwise(0) +
+          when(array_contains(col("keywords"), "war"), 1).otherwise(0)
+      )
+      .withColumn(
+        "tech_score",
+        when(textCol.rlike(techRegex), 3).otherwise(0) +
+          when(array_contains(col("keywords"), "ai"), 1).otherwise(0)
+      )
+      .withColumn(
+        "sports_score",
+        when(textCol.rlike(sportsRegex), 3).otherwise(0)
+      )
+      .withColumn(
+        "business_score",
+        when(textCol.rlike(businessRegex), 3).otherwise(0)
+      )
+      .withColumn(
+        "science_score",
+        when(textCol.rlike(scienceRegex), 3).otherwise(0)
+      )
+
+    val categorizedDF = scoredDF
       .withColumn(
         "category",
         when(
-          textCol.rlike("election|president|government|parliament|minister|senate|war|ceasefire|gaza|israel|ukraine|diplomacy|policy") ||
-            array_contains(col("keywords"), "war") ||
-            array_contains(col("keywords"), "election"),
+          col("politics_score") >= 3 &&
+            col("politics_score") >= greatest(
+              col("tech_score"),
+              col("sports_score"),
+              col("business_score"),
+              col("science_score")
+            ),
           "politics"
         )
-          .when(
-            textCol.rlike("ai|artificial intelligence|openai|google|apple|microsoft|software|hardware|chip|gadget|smartphone|netflix|meta|llama|amazon|kindle|ebook") ||
-              array_contains(col("keywords"), "ai"),
-            "tech"
-          )
-          .when(
-            textCol.rlike("match|league|epl|nba|nfl|goal|tournament|cricket|tennis|football|soccer|liverpool") ||
-              array_contains(col("keywords"), "football"),
-            "sports"
-          )
-          .when(
-            textCol.rlike("stocks?|market|shares?|earnings|revenue|inflation|bank|trade|deal|acquisition|merger|ipo|loan|payments") ||
-              array_contains(col("keywords"), "inflation"),
-            "business"
-          )
-          .when(
-            textCol.rlike("study|research|nasa|space|climate|physics|biology|medical|health|vaccine|quantum|science") ||
-              array_contains(col("keywords"), "science"),
-            "science"
-          )
+
+          .when(col("tech_score") >= greatest(
+            col("sports_score"),
+            col("business_score"),
+            col("science_score")
+          ) && col("tech_score") >= 2, "tech")
+
+          .when(col("sports_score") >= greatest(
+            col("business_score"),
+            col("science_score")
+          ) && col("sports_score") >= 2, "sports")
+
+          .when(col("business_score") >= col("science_score") && col("business_score") >= 2, "business")
+
+          .when(col("science_score") >= 2, "science")
+
           .otherwise("other")
       )
-      .drop("tokens", "tokens_ns", "freq_map")
+      .drop(
+        "politics_score",
+        "tech_score",
+        "sports_score",
+        "business_score",
+        "science_score",
+        "tokens",
+        "tokens_ns",
+        "freq_map"
+      )
 
     val kafkaOutDF = categorizedDF
       .select(to_json(struct(categorizedDF.columns.map(col): _*)).alias("value"))
