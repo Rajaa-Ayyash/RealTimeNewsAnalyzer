@@ -73,7 +73,9 @@ object CategoryTrendAnalysis {
       .withColumn("category", coalesce(col("category"), lit("other")))
       .withColumn("published_ts", to_timestamp(col("published")))
       .filter(col("published_ts").isNotNull)
+      .filter(col("category") =!= "other")
       .select(col("published_ts"), col("category"))
+
 
 
     val windowedCounts = events

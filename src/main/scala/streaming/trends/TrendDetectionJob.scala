@@ -53,6 +53,24 @@ object TrendDetectionJob {
       StructField("category", StringType)
     ))
 
+    val noiseWords = Seq(
+      "top","better","best","worst",
+      "said","says","say",
+      "new","latest","update","updates",
+      "report","reports","reported","according",
+      "confirmed","announcement","official",
+      "statement","claims","sources",
+      "today","yesterday","tomorrow",
+      "week","weeks","month","months","year","years",
+      "time","day","days","hours","minutes",
+      "amid","after","before","during","while",
+      "following","around","over","under",
+      "more","most","less","many","several",
+      "news","media","article","story","stories",
+      "video","videos","image","images"
+    )
+
+
 
     val kafkaDF = spark.readStream
       .format("kafka")
@@ -72,11 +90,16 @@ object TrendDetectionJob {
       .withColumn("published_ts", to_timestamp(col("published")))
       .filter(col("published_ts").isNotNull)
       .withColumn("keyword", explode(col("keywords")))
+      .withColumn("keyword", lower(trim(col("keyword"))))
+      .filter(length(col("keyword")) > 3)
+      .filter(!col("keyword").isin(noiseWords: _*))
+      .dropDuplicates("title", "category", "keyword")
       .select(
         col("published_ts"),
         col("category"),
         col("keyword")
       )
+
 
 
     val windowed = exploded
@@ -116,15 +139,15 @@ object TrendDetectionJob {
         "trend_score",
         col("current_count") / (col("previous_count") + lit(1))
       )
-
+      .filter(col("current_count") >= 3)
 
 
     val trends = trendScores
       .withColumn(
         "trend_level",
-        when(col("trend_score") >= 5, "BREAKING")
-          .when(col("trend_score") >= 2, "HOT")
-          .when(col("trend_score") >= 1, "WARM")
+        when(col("trend_score") >= 8 && col("current_count") >= 10, "BREAKING")
+          .when(col("trend_score") >= 4 && col("current_count") >= 5, "HOT")
+          .when(col("trend_score") >= 1.5, "WARM")
           .otherwise("NORMAL")
       )
       .withColumn("created_at", current_timestamp())
@@ -194,8 +217,6 @@ object TrendDetectionJob {
 
     spark.streams.awaitAnyTermination()
 
-
-    spark.streams.awaitAnyTermination()
 
 
   }
