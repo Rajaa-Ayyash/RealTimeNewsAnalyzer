@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+:root {
+  /* Light mode */
+  --background: #E6EEFF;   /* خلفية */
+  --foreground: #D5DEEF;   /* نصوص */
+  --primary: #628ECB;      /* أزرار، عناصر مهمة */
+  --secondary: #314A6E;    /* نصوص ثانوية أو عناوين فرعية */
+  --muted: #B1C9EF;        /* عناصر ثانوية / muted */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Dark mode */
+    --background: #001D39;
+    --foreground: #D5DEEF;
+    --primary: #628ECB;
+    --secondary: #314A6E;
+    --muted: #B1C9EF;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+
+select option {
+  background-color: #314A6E;
+  color: #FFFFFF;
+}
+
+select option {
+  background-color: #314A6E;
+  color: #FFFFFF;
+}
+
+select::selection {
+  background: #8AAEE0;
+  color: #314A6E;
+}
